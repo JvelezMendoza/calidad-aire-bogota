@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AireLocal Bogotá</title>
+<meta name="description" content="Comparador de calidad del aire: datos oficiales (OpenAQ / RMCAB) vs sensores IoT hiperlocales.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #18202b; --muted: #5b6676; --border: #e3e7ed;
+    --oficial: #2563eb; --propio: #d9480f; --modelo: #0f766e; --accent: #0f766e;
+    --q1: #2f9e44; --q2: #f2c94c; --q3: #f08c00; --q4: #e03131; --q5: #9c36b5; --q6: #7a1f1f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f141b; --panel: #171e27; --text: #e7ecf2; --muted: #9aa6b5; --border: #273140;
+      --oficial: #6ea0ff; --propio: #ff8a4c; --modelo: #3cc6b4; --accent: #3cc6b4;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f141b; --panel: #171e27; --text: #e7ecf2; --muted: #9aa6b5; --border: #273140;
+    --oficial: #6ea0ff; --propio: #ff8a4c; --modelo: #3cc6b4; --accent: #3cc6b4;
+  }
+  .nota { border-left: 4px solid var(--oficial); }
+  .nota p { margin: 0; color: var(--muted); }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 Inter, system-ui, sans-serif; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 24px 16px 48px; }
+  header { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
+  h1 { margin: 0; font-size: 26px; letter-spacing: -0.02em; }
+  .sub { color: var(--muted); margin: 4px 0 0; max-width: 620px; }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; }
+  select, button { font: inherit; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel); color: var(--text); }
+  button { cursor: pointer; background: var(--accent); color: #fff; border-color: transparent; font-weight: 600; }
+  .grid { display: grid; gap: 16px; }
+  .kpis { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); margin-bottom: 16px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px; min-width: 0; }
+  .kpi .label { color: var(--muted); font-size: 13px; }
+  .kpi .value { font-size: 30px; font-weight: 700; letter-spacing: -0.02em; }
+  .kpi .unit { font-size: 14px; color: var(--muted); font-weight: 500; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; color: #111; }
+  .main { grid-template-columns: 2fr 1fr; }
+  @media (max-width: 860px) { .main { grid-template-columns: 1fr; } }
+  h2 { font-size: 16px; margin: 0 0 12px; }
+  .chart-box { position: relative; height: 340px; }
+  #map { height: 340px; border-radius: 8px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+  .status { color: var(--muted); font-size: 13px; margin-top: 8px; min-height: 20px; }
+  .table-scroll { overflow-x: auto; }
+  .biz { margin-top: 16px; }
+  .biz p { margin: 0; color: var(--muted); }
+  footer { margin-top: 24px; color: var(--muted); font-size: 13px; }
+  footer a { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>AireLocal · Comparador de calidad del aire</h1>
+      <p class="sub">Sensores IoT propios en sitios sin estación cercana, comparados con la referencia en vivo (modelo Open-Meteo / CAMS) y con el histórico oficial de la RMCAB y el SIATA publicado en OpenAQ.</p>
+    </div>
+    <div class="controls">
+      <select id="ciudad" aria-label="Ciudad"><option>Bogota</option><option>Medellin</option><option>Cali</option></select>
+      <select id="parametro" aria-label="Contaminante">
+        <option value="pm25">PM2.5</option><option value="pm10">PM10</option><option value="o3">O₃</option>
+        <option value="no2">NO₂</option><option value="co">CO</option><option value="so2">SO₂</option>
+      </select>
+      <select id="horas" aria-label="Periodo">
+        <option value="24">24 h</option><option value="48" selected>48 h</option><option value="168">7 días</option>
+      </select>
+      <button id="refrescar">Actualizar</button>
+    </div>
+  </header>
+
+  <section class="grid kpis">
+    <div class="card kpi"><div class="label" id="kRefLabel">Referencia (última hora con datos)</div><div class="value" id="kOficial">–</div><div id="kOficialCat"></div></div>
+    <div class="card kpi"><div class="label">Promedio sensores propios</div><div class="value" id="kPropio">–</div><div id="kPropioCat"></div></div>
+    <div class="card kpi"><div class="label">Diferencia propio vs referencia</div><div class="value" id="kDif">–</div><div class="label" id="kDifTxt"></div></div>
+    <div class="card kpi"><div class="label">Lecturas en el periodo</div><div class="value" id="kTotal">–</div><div class="label" id="kFuentes"></div></div>
+  </section>
+
+  <section class="grid main">
+    <div class="card">
+      <h2>Serie horaria: referencia vs sensores propios</h2>
+      <div class="chart-box"><canvas id="chart"></canvas></div>
+      <div class="status" id="status"></div>
+    </div>
+    <div class="card">
+      <h2>Mapa de puntos de medición</h2>
+      <div id="map"></div>
+    </div>
+  </section>
+
+  <section class="card" style="margin-top:16px">
+    <h2>Perfil horario promedio: ¿a qué hora se respira peor aire?</h2>
+    <div class="chart-box"><canvas id="perfil"></canvas></div>
+    <div class="status" id="perfilInfo"></div>
+  </section>
+
+  <section class="card nota" style="margin-top:16px">
+    <h2>¿Por qué el dato oficial es histórico?</h2>
+    <p>Las estaciones oficiales de la RMCAB (Bogotá) dejaron de publicar en OpenAQ en abril de 2022, y las del SIATA (Medellín) en septiembre de 2024. Por eso la referencia en vivo es el modelo atmosférico CAMS de Copernicus (vía Open-Meteo), y el histórico oficial se usa como línea base del perfil horario. Este vacío de datos abiertos actualizados es justamente la oportunidad para una red de sensores hiperlocales.</p>
+  </section>
+
+  <section class="card" style="margin-top:16px">
+    <h2>Último valor por sensor</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Fuente</th><th>Sitio / estación</th><th>Sensor</th><th>Fecha (hora Bogotá)</th><th class="num">Valor</th><th>Calidad</th></tr></thead>
+        <tbody id="tabla"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card biz">
+    <h2>Modelo de negocio</h2>
+    <p>Gratis para el ciudadano, financiado por colegios, alcaldías locales y empresas que patrocinan un sensor en su zona — como la TDT: el público recibe la señal sin pagar y los patrocinadores la sostienen.</p>
+  </section>
+
+  <footer>Fuentes: <a href="https://openaq.org" target="_blank" rel="noopener">OpenAQ</a> (API v3, histórico RMCAB/SIATA) y <a href="https://open-meteo.com/en/docs/air-quality-api" target="_blank" rel="noopener">Open-Meteo Air Quality</a> (modelo CAMS, CC BY 4.0). Escala de calidad según Resolución 2254 de 2017 (Colombia), aplicada a PM2.5 y PM10.</footer>
+</div>
+
+<script>
+// URL de la API: se puede cambiar con ?api=https://.../api
+const API = new URLSearchParams(location.search).get('api') || 'https://func-calidadaire-f6zo9.azurewebsites.net/api';
+
+// Rangos del Índice de Calidad del Aire (Res. 2254/2017) en µg/m³
+const ICA = {
+  pm25: [[12, 'Buena', '--q1'], [37, 'Aceptable', '--q2'], [55, 'Dañina a sensibles', '--q3'], [150, 'Dañina', '--q4'], [250, 'Muy dañina', '--q5'], [Infinity, 'Peligrosa', '--q6']],
+  pm10: [[54, 'Buena', '--q1'], [154, 'Aceptable', '--q2'], [254, 'Dañina a sensibles', '--q3'], [354, 'Dañina', '--q4'], [424, 'Muy dañina', '--q5'], [Infinity, 'Peligrosa', '--q6']],
+};
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const COLOR = { openaq: '--oficial', modelo: '--modelo', propio: '--propio' };
+const NOMBRE = { openaq: 'OpenAQ', modelo: 'Modelo CAMS', propio: 'Propio' };
+const $ = id => document.getElementById(id);
+const fmt = v => v == null ? '–' : v.toFixed(1);
+const fmtFecha = iso => new Date(iso).toLocaleString('es-CO', { timeZone: 'America/Bogota', dateStyle: 'short', timeStyle: 'short' });
+
+function categoria(param, v) {
+  const rangos = ICA[param]; if (!rangos || v == null) return '';
+  const [, nombre, color] = rangos.find(([max]) => v <= max);
+  return `<span class="badge" style="background:${css(color)}">${nombre}</span>`;
+}
+
+// Agrupa por hora (promedio) para comparar series con frecuencias distintas
+function porHora(lecturas) {
+  const m = new Map();
+  for (const l of lecturas) {
+    const h = new Date(l.fecha); h.setUTCMinutes(0, 0, 0);
+    const k = h.getTime(); const a = m.get(k) || [0, 0]; a[0] += l.valor; a[1]++; m.set(k, a);
+  }
+  return [...m.entries()].sort((a, b) => a[0] - b[0]).map(([x, [s, n]]) => ({ x, y: +(s / n).toFixed(1) }));
+}
+
+let chart, map, capa;
+function initMap() {
+  map = L.map('map', { scrollWheelZoom: false }).setView([4.65, -74.1], 11);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18, attribution: '© OpenStreetMap' }).addTo(map);
+  capa = L.layerGroup().addTo(map);
+}
+
+async function cargar() {
+  const ciudad = $('ciudad').value, parametro = $('parametro').value, horas = $('horas').value;
+  $('status').textContent = 'Cargando… (si la base estaba en pausa puede tardar ~1 minuto)';
+  let data;
+  try {
+    const r = await fetch(`${API}/lecturas?ciudad=${encodeURIComponent(ciudad)}&parametro=${parametro}&horas=${horas}`);
+    data = await r.json();
+    if (!r.ok) throw new Error(data.error || r.status);
+  } catch (e) {
+    $('status').textContent = 'No se pudo cargar: ' + e.message; return;
+  }
+  const L_ = data.lecturas;
+  const oficial = L_.filter(l => l.fuente === 'openaq');
+  const modelo = L_.filter(l => l.fuente === 'modelo');
+  const propio = L_.filter(l => l.fuente === 'propio');
+  const unidad = (L_[0] && L_[0].unidad) || 'µg/m³';
+
+  // Serie oficial = promedio de todas las estaciones; una serie por cada sensor propio
+  const sensoresPropios = [...new Set(propio.map(l => l.sensor_id))];
+  const tonos = [css('--propio'), '#c2255c', '#e8590c', '#b08900'];
+  const datasets = [];
+  if (oficial.length) datasets.push({ label: 'Estaciones OpenAQ (promedio)', data: porHora(oficial), borderColor: css('--oficial'), backgroundColor: css('--oficial'), borderWidth: 2.5, pointRadius: oficial.length < 5 ? 4 : 0, tension: .3 });
+  if (modelo.length) datasets.push({ label: 'Referencia modelo CAMS (Open-Meteo)', data: porHora(modelo), borderColor: css('--modelo'), backgroundColor: css('--modelo'), borderWidth: 2.5, pointRadius: 0, tension: .3 });
+  sensoresPropios.forEach((s, i) => {
+    const filas = propio.filter(l => l.sensor_id === s);
+    datasets.push({ label: filas[0].estacion || s, data: porHora(filas), borderColor: tonos[i % tonos.length], backgroundColor: tonos[i % tonos.length], borderWidth: 1.8, borderDash: [5, 3], pointRadius: 0, tension: .3 });
+  });
+
+  if (chart) chart.destroy();
+  chart = new Chart($('chart'), {
+    type: 'line', data: { datasets },
+    options: {
+      maintainAspectRatio: false, interaction: { mode: 'nearest', axis: 'x', intersect: false },
+      scales: {
+        x: { type: 'time', time: { unit: horas > 72 ? 'day' : 'hour', tooltipFormat: 'dd/MM HH:mm' }, ticks: { color: css('--muted'), maxTicksLimit: 8 }, grid: { color: css('--border') } },
+        y: { beginAtZero: true, title: { display: true, text: unidad, color: css('--muted') }, ticks: { color: css('--muted') }, grid: { color: css('--border') } },
+      },
+      plugins: { legend: { labels: { color: css('--text'), boxWidth: 12 } } },
+    },
+  });
+
+  // KPIs: promedio de la última hora con datos de cada fuente
+  const ultimoProm = arr => { const s = porHora(arr); return s.length ? s[s.length - 1].y : null; };
+  // Referencia: estaciones OpenAQ en vivo si las hay; si no, el modelo CAMS
+  const ref = oficial.length ? oficial : modelo;
+  $('kRefLabel').textContent = oficial.length ? 'Referencia: estaciones OpenAQ (última hora)' : 'Referencia: modelo CAMS (última hora)';
+  const vo = ultimoProm(ref), vp = ultimoProm(propio);
+  $('kOficial').innerHTML = vo == null ? '–' : `${fmt(vo)} <span class="unit">${unidad}</span>`;
+  $('kPropio').innerHTML = vp == null ? '–' : `${fmt(vp)} <span class="unit">${unidad}</span>`;
+  $('kOficialCat').innerHTML = categoria(parametro, vo);
+  $('kPropioCat').innerHTML = categoria(parametro, vp);
+  if (vo != null && vp != null && vo > 0) {
+    const d = (vp - vo) / vo * 100;
+    $('kDif').textContent = (d > 0 ? '+' : '') + d.toFixed(0) + ' %';
+    $('kDifTxt').textContent = d > 0 ? 'los sitios propios respiran peor aire que la referencia' : 'los sitios propios están mejor que la referencia';
+  } else { $('kDif').textContent = '–'; $('kDifTxt').textContent = 'se necesitan datos de ambas fuentes'; }
+  $('kTotal').textContent = data.total.toLocaleString('es-CO');
+  $('kFuentes').textContent = `${oficial.length} OpenAQ · ${modelo.length} modelo · ${propio.length} propias`;
+
+  // Tabla y mapa: último valor de cada sensor
+  const ultimos = new Map();
+  for (const l of L_) ultimos.set(l.fuente + '|' + l.sensor_id, l);
+  const filas = [...ultimos.values()].sort((a, b) => a.fuente.localeCompare(b.fuente) || b.valor - a.valor);
+  $('tabla').innerHTML = filas.map(l => `<tr>
+      <td><span class="dot" style="background:${css(COLOR[l.fuente])}"></span>${NOMBRE[l.fuente]}</td>
+      <td>${l.estacion || '–'}</td><td>${l.sensor_id}</td><td>${fmtFecha(l.fecha)}</td>
+      <td class="num">${fmt(l.valor)}</td><td>${categoria(parametro, l.valor)}</td></tr>`).join('')
+    || '<tr><td colspan="6">Sin datos para este filtro.</td></tr>';
+
+  capa.clearLayers();
+  const puntos = filas.filter(l => l.lat != null && l.lon != null);
+  for (const l of puntos) {
+    L.circleMarker([l.lat, l.lon], { radius: 9, color: '#fff', weight: 2, fillOpacity: .9, fillColor: css(COLOR[l.fuente]) })
+      .bindPopup(`<b>${l.estacion || l.sensor_id}</b><br>${NOMBRE[l.fuente]}<br>${fmt(l.valor)} ${unidad}`).addTo(capa);
+  }
+  if (puntos.length) map.fitBounds(puntos.map(l => [l.lat, l.lon]), { padding: [30, 30], maxZoom: 13 });
+
+  $('status').textContent = `Actualizado ${new Date().toLocaleTimeString('es-CO')} · API: ${API}`;
+  cargarPerfil(ciudad, parametro, unidad);
+}
+
+// Perfil horario: promedio por hora del día (hora Bogotá) de cada fuente sobre todo el histórico
+let perfilChart;
+async function cargarPerfil(ciudad, parametro, unidad) {
+  let data;
+  try {
+    const r = await fetch(`${API}/lecturas?ciudad=${encodeURIComponent(ciudad)}&parametro=${parametro}&modo=perfil`);
+    data = await r.json();
+    if (!r.ok) throw new Error(data.error || r.status);
+  } catch (e) { $('perfilInfo').textContent = 'No se pudo cargar el perfil: ' + e.message; return; }
+
+  const horas = [...Array(24).keys()];
+  const etiquetas = { openaq: 'Histórico oficial (OpenAQ)', modelo: 'Modelo CAMS', propio: 'Sensores propios' };
+  const datasets = ['openaq', 'modelo', 'propio'].map(f => {
+    const filas = data.perfil.filter(p => p.fuente === f);
+    if (!filas.length) return null;
+    const porH = new Map(filas.map(p => [p.hora_local, p.promedio]));
+    return { label: etiquetas[f], data: horas.map(h => porH.get(h) ?? null), borderColor: css(COLOR[f]), backgroundColor: css(COLOR[f]),
+             borderWidth: 2.5, pointRadius: 2, tension: .35, spanGaps: true, borderDash: f === 'propio' ? [5, 3] : [] };
+  }).filter(Boolean);
+
+  if (perfilChart) perfilChart.destroy();
+  perfilChart = new Chart($('perfil'), {
+    type: 'line', data: { labels: horas.map(h => `${String(h).padStart(2, '0')}:00`), datasets },
+    options: {
+      maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: { ticks: { color: css('--muted'), maxTicksLimit: 12 }, grid: { color: css('--border') } },
+        y: { beginAtZero: true, title: { display: true, text: unidad, color: css('--muted') }, ticks: { color: css('--muted') }, grid: { color: css('--border') } },
+      },
+      plugins: { legend: { labels: { color: css('--text'), boxWidth: 12 } } },
+    },
+  });
+
+  const resumen = ['openaq', 'modelo', 'propio'].map(f => {
+    const filas = data.perfil.filter(p => p.fuente === f);
+    if (!filas.length) return null;
+    const n = filas.reduce((s, p) => s + p.n, 0);
+    const desde = filas.reduce((m, p) => p.desde < m ? p.desde : m, filas[0].desde);
+    const hasta = filas.reduce((m, p) => p.hasta > m ? p.hasta : m, filas[0].hasta);
+    return `${etiquetas[f]}: ${n.toLocaleString('es-CO')} lecturas (${desde.slice(0, 10)} a ${hasta.slice(0, 10)})`;
+  }).filter(Boolean);
+  $('perfilInfo').textContent = resumen.join(' · ') || 'Sin datos para este filtro.';
+}
+
+initMap();
+['ciudad', 'parametro', 'horas'].forEach(id => $(id).addEventListener('change', cargar));
+$('refrescar').addEventListener('click', cargar);
+cargar();
+setInterval(cargar, 5 * 60 * 1000);
+</script>
+</body>
+</html>
