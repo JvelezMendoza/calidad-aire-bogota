@@ -1,0 +1,36 @@
+# Despliegue continuo: cada push a main que toque /api se publica en Azure Functions.
+# Requiere el secreto AZURE_FUNCTIONAPP_PUBLISH_PROFILE (ver README, sección "CI/CD").
+name: Deploy Azure Functions
+
+on:
+  push:
+    branches: [main]
+    paths: ["api/**", ".github/workflows/deploy-functions.yml"]
+  workflow_dispatch:
+
+env:
+  AZURE_FUNCTIONAPP_NAME: func-calidadaire-f6zo9
+  TIENE_SECRETO: ${{ secrets.AZURE_FUNCTIONAPP_PUBLISH_PROFILE != '' }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verificar sintaxis Python
+        run: python -m py_compile api/function_app.py api/db.py
+
+      - name: Aviso si falta el secreto
+        if: env.TIENE_SECRETO != 'true'
+        run: echo "::warning::Falta el secreto AZURE_FUNCTIONAPP_PUBLISH_PROFILE; se omite el despliegue (ver README)."
+
+      - name: Desplegar en Azure Functions (Flex Consumption, build remoto)
+        if: env.TIENE_SECRETO == 'true'
+        uses: Azure/functions-action@v1
+        with:
+          app-name: ${{ env.AZURE_FUNCTIONAPP_NAME }}
+          package: api
+          sku: flexconsumption
+          remote-build: true
+          publish-profile: ${{ secrets.AZURE_FUNCTIONAPP_PUBLISH_PROFILE }}
