@@ -30,7 +30,7 @@ En toda Colombia solo 3 sensores (AirGradient, no oficiales) reportaron en la se
 | `fuente` | Origen | Uso |
 |---|---|---|
 | `openaq` | OpenAQ API v3: histórico oficial RMCAB/SIATA más los sensores que sigan activos | Línea base histórica (perfil horario) |
-| `modelo` | [Open-Meteo Air Quality](https://open-meteo.com/en/docs/air-quality-api), modelo CAMS de Copernicus | Referencia en vivo cada hora |
+| `modelo` | [Open-Meteo Air Quality](https://open-meteo.com/en/docs/air-quality-api), modelo CAMS de Copernicus | Referencia con datos horarios (se ingiere una vez al día) |
 | `propio` | Sensores IoT propios | Medición hiperlocal |
 
 Este vacío de datos abiertos actualizados **refuerza el caso de negocio**: hace falta una red de sensores propia para tener información de calidad del aire a nivel de barrio.
@@ -52,7 +52,7 @@ Funciona como la **televisión digital terrestre (TDT)**: el público recibe la 
 | Clonar la base de datos de una página | Se replica en Azure SQL el **esquema de OpenAQ** (estación, contaminante, valor, ubicación, fecha): ver `sql/schema.sql` |
 | Open data | Datos reales de **OpenAQ** (histórico oficial RMCAB y SIATA, unas 37 000 mediciones horarias) y de **Open-Meteo** (en vivo) |
 | API | Consumo de las APIs públicas **OpenAQ v3** y **Open-Meteo**, y una API REST propia (`/api/lecturas`, `/api/sensor`) |
-| Big Data (a escala educativa) | Ingesta continua cada hora de 3 ciudades y 6 contaminantes, con carga histórica masiva y análisis agregado (perfil horario por fuente), siguiendo el patrón **ingesta → almacenamiento → análisis** |
+| Big Data (a escala educativa) | Ingesta automática diaria (datos horarios) de 3 ciudades y 6 contaminantes, con carga histórica masiva y análisis agregado (perfil horario por fuente), siguiendo el patrón **ingesta → almacenamiento → análisis** |
 | Tema comercial con IoT | Sensores propios comparados con los oficiales y modelo de patrocinio tipo TDT |
 | GitHub | Este repositorio, con despliegue continuo por GitHub Actions y dashboard en GitHub Pages |
 | Resiliencia | Si OpenAQ, una estación o una ciudad fallan, la ingesta sigue con el resto. Hay reintentos ante errores 429/5xx de OpenAQ y reintentos con backoff si la base SQL serverless se está reanudando |
@@ -62,8 +62,8 @@ Funciona como la **televisión digital terrestre (TDT)**: el público recibe la 
 
 ```mermaid
 flowchart LR
-    OAQ[OpenAQ API v3<br/>histórico RMCAB / SIATA] -->|cada hora + carga histórica| F1
-    OM[Open-Meteo<br/>modelo CAMS en vivo] -->|cada hora| F1
+    OAQ[OpenAQ API v3<br/>histórico RMCAB / SIATA] -->|diario + carga histórica| F1
+    OM[Open-Meteo<br/>modelo CAMS] -->|diario, últimas 48 h| F1
     IOT[Sensores IoT propios<br/>simulados hoy, físicos mañana] -->|HTTP POST + key| F2
     subgraph Azure [Azure · brazilsouth · serverless]
       F1[IngestaOpenAQ<br/>Timer trigger]
@@ -110,7 +110,10 @@ Un índice único sobre `(fuente, sensor_id, parametro, fecha)` evita duplicados
 
 ## 4. Los tres microservicios (`api/function_app.py`)
 
-### `IngestaOpenAQ`: timer, minuto 5 de cada hora
+### `IngestaOpenAQ`: timer diario, 12:05 UTC (7:05 a. m. en Bogotá)
+
+> **Por qué una vez al día:** la base serverless de la oferta gratuita se pausa tras 60 minutos sin uso, y ese valor no se puede cambiar. Si la ingesta corriera cada hora, la base nunca se pausaría y el cupo gratuito mensual (100 000 vCore-s) se agotaría en unos 3 días. Una corrida diaria trae igualmente las últimas 48 horas de Open-Meteo, hora a hora, así que la serie del dashboard queda completa.
+
 1. Busca en OpenAQ las estaciones en un radio de 25 km de cada ciudad (`/v3/locations`).
 2. Descarta las que llevan más de 14 días sin reportar.
 3. Pide la última medición de cada estación (`/v3/locations/{id}/latest`) y respeta el límite de 60 peticiones por minuto.
