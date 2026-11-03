@@ -1,0 +1,13 @@
+# Secretos (cadena de conexión SQL, API key de OpenAQ) — nunca subir a GitHub
+local.settings.json
+.deploy-names.json
+*.env
+.env*
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Artefactos de despliegue
+*.zip
