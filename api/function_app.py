@@ -1,6 +1,6 @@
 """Comparador de Calidad de Aire — microservicios serverless (Azure Functions, Python v2).
 
-1. IngestaOpenAQ   (timer, cada hora) -> datos abiertos de OpenAQ + referencia en vivo de Open-Meteo
+1. IngestaOpenAQ   (timer, diario)    -> datos abiertos de OpenAQ + referencia en vivo de Open-Meteo
 2. RecibirSensor   (HTTP POST)        -> recibe lecturas de sensores propios (IoT, por ahora simulados)
 3. ObtenerLecturas (HTTP GET)         -> expone las lecturas (serie o perfil horario) en JSON para el dashboard
 +  CargaHistorica  (HTTP POST, admin) -> utilidad de una sola vez: histórico oficial RMCAB/SIATA desde OpenAQ
@@ -180,10 +180,14 @@ def ingestar_open_meteo_ciudad(ciudad: str, lat: float, lon: float) -> list[dict
 
 
 # ---------------------------------------------------------------------------
-# 1. IngestaOpenAQ — cada hora en el minuto 5
+# 1. IngestaOpenAQ — una vez al día, 12:05 UTC (7:05 a. m. hora Bogotá)
+# La base serverless gratuita se pausa tras 60 min sin uso (valor fijo en la oferta
+# gratuita): ejecutar cada hora la mantendría siempre encendida y agotaría el cupo
+# mensual en ~3 días. Cada corrida trae las últimas 48 h de Open-Meteo hora a hora,
+# así que la serie horaria del dashboard no pierde datos.
 # ---------------------------------------------------------------------------
 @app.function_name("IngestaOpenAQ")
-@app.timer_trigger(schedule="0 5 * * * *", arg_name="timer", run_on_startup=False, use_monitor=True)
+@app.timer_trigger(schedule="0 5 12 * * *", arg_name="timer", run_on_startup=False, use_monitor=True)
 def ingesta_openaq(timer: func.TimerRequest) -> None:
     session = _openaq_session()
     if session is None:
