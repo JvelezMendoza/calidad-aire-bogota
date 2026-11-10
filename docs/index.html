@@ -59,6 +59,15 @@
   .table-scroll { overflow-x: auto; }
   .biz { margin-top: 16px; }
   .biz p { margin: 0; color: var(--muted); }
+  .alerta { display: flex; gap: 12px; align-items: flex-start; border-radius: 12px; padding: 14px 16px; margin-bottom: 16px; color: #111; border: 1px solid rgba(0,0,0,.08); }
+  .alerta[hidden] { display: none; }
+  .alerta .ico { font-size: 22px; line-height: 1.2; }
+  .alerta b { display: block; font-size: 15px; }
+  .alerta p { margin: 2px 0 0; font-size: 14px; }
+  .pron { margin-bottom: 16px; }
+  .pron-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+  .pron-item .label { color: var(--muted); font-size: 13px; }
+  .pron-item .value { font-size: 24px; font-weight: 700; letter-spacing: -0.02em; }
   footer { margin-top: 24px; color: var(--muted); font-size: 13px; }
   footer a { color: var(--accent); }
 </style>
@@ -83,11 +92,23 @@
     </div>
   </header>
 
+  <div id="alerta" class="alerta" role="status" hidden></div>
+
   <section class="grid kpis">
     <div class="card kpi"><div class="label" id="kRefLabel">Referencia (última hora con datos)</div><div class="value" id="kOficial">–</div><div id="kOficialCat"></div></div>
     <div class="card kpi"><div class="label">Promedio sensores propios</div><div class="value" id="kPropio">–</div><div id="kPropioCat"></div></div>
     <div class="card kpi"><div class="label">Diferencia propio vs referencia</div><div class="value" id="kDif">–</div><div class="label" id="kDifTxt"></div></div>
     <div class="card kpi"><div class="label">Lecturas en el periodo</div><div class="value" id="kTotal">–</div><div class="label" id="kFuentes"></div></div>
+  </section>
+
+  <section class="card pron">
+    <h2 id="pronTitulo">Pronóstico para mañana</h2>
+    <div class="pron-grid">
+      <div class="pron-item"><div class="label">Promedio del día</div><div class="value" id="pProm">–</div><div id="pPromCat"></div></div>
+      <div class="pron-item"><div class="label" id="pPicoLbl">Hora pico</div><div class="value" id="pPico">–</div><div id="pPicoCat"></div></div>
+      <div class="pron-item"><div class="label">Entrada a clases (7:00 a. m.)</div><div class="value" id="p7">–</div><div id="p7Cat"></div></div>
+    </div>
+    <div class="status" id="pronInfo"></div>
   </section>
 
   <section class="grid main">
@@ -152,6 +173,82 @@ function categoria(param, v) {
   const [, nombre, color] = rangos.find(([max]) => v <= max);
   return `<span class="badge" style="background:${css(color)}">${nombre}</span>`;
 }
+// Índice de la categoría ICA (0 = Buena … 5 = Peligrosa); null si el contaminante no tiene escala
+function nivel(param, v) {
+  const rangos = ICA[param]; if (!rangos || v == null) return null;
+  return rangos.findIndex(([max]) => v <= max);
+}
+
+// ---- Pronóstico (Open-Meteo / CAMS, consultado directo desde el navegador: gratis y sin tocar la base) ----
+const COORDS = { Bogota: [4.7110, -74.0721], Medellin: [6.2442, -75.5812], Cali: [3.4516, -76.5320] };
+const OM_VAR = { pm25: 'pm2_5', pm10: 'pm10', o3: 'ozone', no2: 'nitrogen_dioxide', co: 'carbon_monoxide', so2: 'sulphur_dioxide' };
+const fechaLocal = (desplDias = 0) => {
+  const d = new Date(new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' }) + 'T12:00:00Z');
+  d.setUTCDate(d.getUTCDate() + desplDias); return d.toISOString().slice(0, 10);
+};
+async function obtenerPronostico(ciudad, parametro) {
+  const [lat, lon] = COORDS[ciudad], v = OM_VAR[parametro];
+  const r = await fetch(`https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${lat}&longitude=${lon}&hourly=${v}&timezone=America%2FBogota&forecast_days=3`);
+  if (!r.ok) throw new Error('Open-Meteo ' + r.status);
+  const d = await r.json();
+  // Las horas vienen en hora local de Bogotá (UTC-5, sin horario de verano)
+  const puntos = d.hourly.time.map((t, i) => ({ t, y: d.hourly[v][i] })).filter(p => p.y != null);
+  const manana = fechaLocal(1);
+  const deManana = puntos.filter(p => p.t.startsWith(manana));
+  const ahora = Date.now();
+  const serie = puntos.map(p => ({ x: new Date(p.t + ':00-05:00').getTime(), y: p.y }))
+                      .filter(p => p.x >= ahora - 3600e3 && p.x <= ahora + 24 * 3600e3);
+  if (!deManana.length) return { serie, unidad: d.hourly_units?.[v] };
+  const prom = deManana.reduce((s, p) => s + p.y, 0) / deManana.length;
+  const pico = deManana.reduce((m, p) => p.y > m.y ? p : m);
+  const siete = deManana.find(p => p.t.endsWith('T07:00'));
+  return { serie, manana, prom, pico, siete: siete ? siete.y : null, unidad: d.hourly_units?.[v] };
+}
+function pintarPronostico(p, ciudad, parametro, unidad) {
+  const u = `<span class="unit">${unidad}</span>`;
+  if (!p || p.prom == null) {
+    ['pProm', 'pPico', 'p7'].forEach(id => $(id).textContent = '–');
+    ['pPromCat', 'pPicoCat', 'p7Cat'].forEach(id => $(id).innerHTML = '');
+    $('pronInfo').textContent = 'No se pudo obtener el pronóstico en este momento.'; return;
+  }
+  const dia = new Date(p.manana + 'T12:00:00Z').toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' });
+  $('pronTitulo').textContent = `Pronóstico para mañana · ${ciudad}, ${dia}`;
+  $('pProm').innerHTML = `${fmt(p.prom)} ${u}`; $('pPromCat').innerHTML = categoria(parametro, p.prom);
+  $('pPicoLbl').textContent = `Hora pico (${p.pico.t.slice(11, 16)})`;
+  $('pPico').innerHTML = `${fmt(p.pico.y)} ${u}`; $('pPicoCat').innerHTML = categoria(parametro, p.pico.y);
+  $('p7').innerHTML = p.siete == null ? '–' : `${fmt(p.siete)} ${u}`; $('p7Cat').innerHTML = categoria(parametro, p.siete);
+  $('pronInfo').textContent = 'Fuente: pronóstico del modelo CAMS (Copernicus) vía Open-Meteo, consultado en vivo. La línea punteada clara del gráfico muestra las próximas 24 h.';
+}
+
+// ---- Aviso de salud cuando el aire es dañino (escala Res. 2254/2017) ----
+const RECOMENDACION = [
+  '', '',
+  'Niños, adultos mayores y personas con asma o enfermedades del corazón deben reducir la actividad física intensa al aire libre.',
+  'Toda la población debe reducir la actividad al aire libre; los grupos sensibles deben evitarla. Se recomienda cerrar ventanas en horas pico.',
+  'Evite actividades al aire libre. Los colegios deberían suspender educación física y recreos al aire libre.',
+  'Permanezca en interiores con ventanas cerradas y siga las indicaciones de las autoridades.',
+];
+function pintarAlerta(parametro, unidad, ultimos, pron) {
+  const box = $('alerta');
+  if (!ICA[parametro]) { box.hidden = true; return; }
+  const nombres = ICA[parametro].map(r => r[1]), colores = ICA[parametro].map(r => r[2]);
+  // Puntos con aire dañino ahora (último valor de cada sensor/estación en el periodo)
+  const malos = ultimos.map(l => ({ l, n: nivel(parametro, l.valor) })).filter(o => o.n >= 2).sort((a, b) => b.l.valor - a.l.valor);
+  const nMan = pron && pron.pico ? nivel(parametro, pron.pico.y) : null;
+  const peor = Math.max(malos.length ? malos[0].n : 0, nMan ?? 0);
+  if (peor < 2) {
+    box.style.background = css('--q1') + '33'; box.style.color = 'var(--text)';
+    box.innerHTML = `<span class="ico">✅</span><div><b>Sin alertas</b><p>La calidad del aire es buena o aceptable en todos los puntos y en el pronóstico de mañana.</p></div>`;
+    box.hidden = false; return;
+  }
+  const partes = [];
+  if (malos.length) partes.push(`Ahora: ${malos.slice(0, 3).map(o => `<strong>${o.l.estacion || o.l.sensor_id}</strong> (${fmt(o.l.valor)} ${unidad}, ${nombres[o.n].toLowerCase()})`).join(', ')}.`);
+  if (nMan >= 2) partes.push(`Mañana se espera un pico de <strong>${fmt(pron.pico.y)} ${unidad}</strong> a las ${pron.pico.t.slice(11, 16)} (${nombres[nMan].toLowerCase()}).`);
+  box.style.background = css(colores[peor]);
+  box.style.color = peor >= 3 ? '#fff' : '#111';
+  box.innerHTML = `<span class="ico">⚠️</span><div><b>Alerta: aire ${nombres[peor].toLowerCase()}</b><p>${partes.join(' ')}</p><p><em>Recomendación:</em> ${RECOMENDACION[peor]}</p></div>`;
+  box.hidden = false;
+}
 
 // Agrupa por hora (promedio) para comparar series con frecuencias distintas
 function porHora(lecturas) {
@@ -173,13 +270,19 @@ function initMap() {
 async function cargar() {
   const ciudad = $('ciudad').value, parametro = $('parametro').value, horas = $('horas').value;
   $('status').textContent = 'Cargando… (si la base estaba en pausa puede tardar ~1 minuto)';
+  const pPron = obtenerPronostico(ciudad, parametro).catch(() => null);
   let data;
   try {
     const r = await fetch(`${API}/lecturas?ciudad=${encodeURIComponent(ciudad)}&parametro=${parametro}&horas=${horas}`);
     data = await r.json();
     if (!r.ok) throw new Error(data.error || r.status);
   } catch (e) {
-    $('status').textContent = 'No se pudo cargar: ' + e.message; return;
+    $('status').textContent = 'No se pudo cargar: ' + e.message;
+    // El pronóstico no depende de nuestra API: se muestra igual
+    const pron = await pPron;
+    pintarPronostico(pron, ciudad, parametro, (pron && pron.unidad) || 'µg/m³');
+    pintarAlerta(parametro, (pron && pron.unidad) || 'µg/m³', [], pron);
+    return;
   }
   const L_ = data.lecturas;
   const oficial = L_.filter(l => l.fuente === 'openaq');
@@ -197,6 +300,8 @@ async function cargar() {
     const filas = propio.filter(l => l.sensor_id === s);
     datasets.push({ label: filas[0].estacion || s, data: porHora(filas), borderColor: tonos[i % tonos.length], backgroundColor: tonos[i % tonos.length], borderWidth: 1.8, borderDash: [5, 3], pointRadius: 0, tension: .3 });
   });
+  const pron = await pPron;
+  if (pron && pron.serie.length) datasets.push({ label: 'Pronóstico CAMS (próximas 24 h)', data: pron.serie, borderColor: css('--modelo') + '99', backgroundColor: css('--modelo') + '99', borderWidth: 2, borderDash: [2, 3], pointRadius: 0, tension: .3 });
 
   if (chart) chart.destroy();
   chart = new Chart($('chart'), {
@@ -246,6 +351,9 @@ async function cargar() {
       .bindPopup(`<b>${l.estacion || l.sensor_id}</b><br>${NOMBRE[l.fuente]}<br>${fmt(l.valor)} ${unidad}`).addTo(capa);
   }
   if (puntos.length) map.fitBounds(puntos.map(l => [l.lat, l.lon]), { padding: [30, 30], maxZoom: 13 });
+
+  pintarPronostico(pron, ciudad, parametro, unidad);
+  pintarAlerta(parametro, unidad, filas, pron);
 
   $('status').textContent = `Actualizado ${new Date().toLocaleTimeString('es-CO')} · API: ${API}`;
   cargarPerfil(ciudad, parametro, unidad);
